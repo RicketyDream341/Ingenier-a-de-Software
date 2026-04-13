@@ -1,6 +1,6 @@
 # Profile Manager
 
-Aplicacion web para el **Reto 5: Matching explicable con Neo4j**. El sistema permite registrar candidatos, completar un perfil profesional tipo LinkedIn, relacionar skills con roles y vacantes, y generar recomendaciones explicables usando un grafo en Neo4j.
+Profile Manager es una plataforma web para gestionar perfiles profesionales y recomendar vacantes laborales de forma explicable. El sistema permite registrar candidatos, completar informacion profesional, relacionar habilidades con roles y vacantes, y mostrar por que una oportunidad puede ser relevante para cada usuario.
 
 ## Stack
 
@@ -159,7 +159,7 @@ El resultado incluye `score`, `matched_skills` y una explicacion textual.
 
 ## Endpoints Principales
 
-Salud del backend:
+Verificacion de servicios:
 
 ```text
 GET /
@@ -237,36 +237,3 @@ profile_manager_session
 La cookie es `HttpOnly`, tiene `SameSite=Lax` y expira en 8 horas. Al hacer logout, el backend borra la cookie inmediatamente.
 
 La clave de firma del JWT se genera aleatoriamente al arrancar el backend. Por eso, si se reinicia el backend, las sesiones anteriores dejan de ser validas.
-
-## Preparar Para GitHub
-
-Antes de subir:
-
-```bash
-bash start_app.sh stop
-```
-
-No subas archivos generados. El `.gitignore` ya excluye:
-
-- `frontend/node_modules/`
-- `frontend/dist/`
-- `.run_logs/`
-- `.run_pids/`
-- `__pycache__/`
-- entornos virtuales de Python
-
-Inicializar repositorio:
-
-```bash
-git init
-git add .
-git commit -m "Initial Profile Manager project"
-```
-
-Luego crea el repositorio en GitHub y conecta el remoto:
-
-```bash
-git remote add origin https://github.com/TU_USUARIO/TU_REPOSITORIO.git
-git branch -M main
-git push -u origin main
-```
