@@ -544,6 +544,7 @@ function RecruiterDashboard({ currentUser, navigate, setMessage, updateCurrentUs
   const [recommendations, setRecommendations] = useState([])
   const [applications, setApplications] = useState([])
   const [form, setForm] = useState(() => recruiterFormFromUser(currentUser))
+  const [vacancyForm, setVacancyForm] = useState(() => emptyRecruiterVacancyForm(currentUser))
 
   const loadVacancies = async () => {
     const data = await requestJson(`/recruiters/${currentUser.id}/vacancies`)
@@ -551,6 +552,8 @@ function RecruiterDashboard({ currentUser, navigate, setMessage, updateCurrentUs
     setVacancies(vacancyList)
     if (!selectedVacancyId && vacancyList[0]?.id) {
       setSelectedVacancyId(vacancyList[0].id)
+    } else if (!vacancyList.length) {
+      setVacancyForm(emptyRecruiterVacancyForm(currentUser))
     }
   }
 
@@ -569,16 +572,29 @@ function RecruiterDashboard({ currentUser, navigate, setMessage, updateCurrentUs
   useEffect(() => {
     if (currentUser) {
       setForm(recruiterFormFromUser(currentUser))
+      setVacancyForm(emptyRecruiterVacancyForm(currentUser))
       loadVacancies().catch((error) => setMessage(`No se pudieron cargar las vacantes: ${error.message}`))
     }
   }, [currentUser])
 
   useEffect(() => {
     if (selectedVacancyId) {
-      loadRecommendations(selectedVacancyId).catch((error) => setMessage(`No se pudieron cargar las recomendaciones del reclutador: ${error.message}`))
       loadApplications(selectedVacancyId).catch((error) => setMessage(`No se pudieron cargar las postulaciones de la vacante: ${error.message}`))
+      if (configurationTotal(form, vacancyForm) === 100) {
+        loadRecommendations(selectedVacancyId).catch((error) => setMessage(`No se pudieron cargar las recomendaciones del reclutador: ${error.message}`))
+      } else {
+        setRecommendations([])
+      }
     }
   }, [selectedVacancyId])
+
+  useEffect(() => {
+    if (!selectedVacancyId) return
+    const selectedVacancy = vacancies.find((item) => item.id === selectedVacancyId)
+    if (selectedVacancy) {
+      setVacancyForm(vacancyFormFromVacancy(selectedVacancy, currentUser))
+    }
+  }, [selectedVacancyId, vacancies, currentUser])
 
   if (!currentUser) {
     return (
@@ -589,15 +605,10 @@ function RecruiterDashboard({ currentUser, navigate, setMessage, updateCurrentUs
     )
   }
 
-  const totalWeight = recruiterWeightTotal(form)
+  const totalWeight = configurationTotal(form, vacancyForm)
 
   const saveRecruiterProfile = async (event) => {
     event.preventDefault()
-    if (totalWeight !== 100) {
-      setMessage('Los pesos del reclutador deben sumar exactamente 100.')
-      return
-    }
-
     try {
       const data = await requestJson('/users', {
         method: 'POST',
@@ -610,15 +621,33 @@ function RecruiterDashboard({ currentUser, navigate, setMessage, updateCurrentUs
           empresa: form.empresa.trim() || null,
           recruiter_city_preferences: serializeCityPreferences(form.recruiter_city_preferences),
           recruiter_weight_role: Number(form.recruiter_weight_role),
-          recruiter_weight_skills: Number(form.recruiter_weight_skills),
           recruiter_weight_modality: Number(form.recruiter_weight_modality),
         }),
       })
       updateCurrentUser(data.user)
       setMessage('Preferencias del reclutador actualizadas.')
-      await loadRecommendations()
+      if (selectedVacancyId && configurationTotal(form, vacancyForm) === 100) {
+        await loadRecommendations()
+      }
     } catch (error) {
       setMessage(`No fue posible guardar los pesos del reclutador: ${error.message}`)
+    }
+  }
+
+  const saveVacancy = async (event) => {
+    event.preventDefault()
+    try {
+      const payload = buildRecruiterVacancyPayload(vacancyForm, currentUser)
+      const data = await requestJson(`/recruiters/${currentUser.id}/vacancies`, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      })
+      await loadVacancies()
+      setSelectedVacancyId(data.vacancy.id)
+      setVacancyForm(vacancyFormFromVacancy(data.vacancy, currentUser))
+      setMessage(vacancyForm.id ? 'Vacante actualizada.' : 'Vacante creada.')
+    } catch (error) {
+      setMessage(`No fue posible guardar la vacante: ${error.message}`)
     }
   }
 
@@ -635,10 +664,28 @@ function RecruiterDashboard({ currentUser, navigate, setMessage, updateCurrentUs
       </section>
 
       <section style={styles.section}>
+        <RecruiterVacancyForm
+          form={vacancyForm}
+          setForm={setVacancyForm}
+          currentUser={currentUser}
+          totalWeight={totalWeight}
+          onSubmit={saveVacancy}
+          onCreateNew={() => {
+            setSelectedVacancyId('')
+            setVacancyForm(emptyRecruiterVacancyForm(currentUser))
+            setRecommendations([])
+            setApplications([])
+          }}
+        />
+      </section>
+
+      <section style={styles.section}>
         <section style={styles.card}>
           <h3 style={{ marginTop: 0 }}>Vacante a evaluar</h3>
+          <p style={styles.muted}>Selecciona una vacante administrada por ti para revisar postulaciones y calcular el ranking.</p>
           <Field label="Vacante">
             <select style={styles.input} value={selectedVacancyId} onChange={(event) => setSelectedVacancyId(event.target.value)}>
+              <option value="">Selecciona una vacante</option>
               {vacancies.map((vacancy) => (
                 <option key={vacancy.id} value={vacancy.id}>{vacancy.titulo} · {vacancy.rol}</option>
               ))}
@@ -649,6 +696,9 @@ function RecruiterDashboard({ currentUser, navigate, setMessage, updateCurrentUs
 
       <section style={styles.section}>
         <h2>Ranking de candidatos</h2>
+        {selectedVacancyId && totalWeight !== 100 ? (
+          <p style={styles.status}>Ajusta la configuracion de pesos para que el total sea exactamente 100 antes de calcular el ranking.</p>
+        ) : null}
         <div style={{ display: 'grid', gap: 14 }}>
           {recommendations.map((item) => (
             <article key={item.candidate.id} style={styles.card}>
@@ -731,17 +781,16 @@ function ProfessionalProfileForm({ form, setForm, selectedSkills, setSelectedSki
 function RecruiterWeightsForm({ form, setForm, totalWeight, onSubmit }) {
   return (
     <form onSubmit={onSubmit} style={{ display: 'grid', gap: 22 }}>
-      <FormBlock title="Preferencias del reclutador" description="Define ciudades con puntaje y distribuye el resto entre rol, skills y modalidad. La suma total debe ser exactamente 100 puntos.">
+      <FormBlock title="Preferencias del reclutador" description="Distribuye el puntaje de evaluacion entre las caracteristicas mas relevantes para tu proceso de seleccion.">
         <Field label="Nombre completo"><input style={styles.input} name="nombre" value={form.nombre} onChange={updateForm(setForm)} required /></Field>
         <Field label="Empresa"><input style={styles.input} name="empresa" value={form.empresa} onChange={updateForm(setForm)} /></Field>
         <Field label="Peso por rol"><input style={styles.input} name="recruiter_weight_role" type="number" min="0" max="100" value={form.recruiter_weight_role} onChange={updateForm(setForm)} required /></Field>
-        <Field label="Peso por skills"><input style={styles.input} name="recruiter_weight_skills" type="number" min="0" max="100" value={form.recruiter_weight_skills} onChange={updateForm(setForm)} required /></Field>
         <Field label="Peso por modalidad"><input style={styles.input} name="recruiter_weight_modality" type="number" min="0" max="100" value={form.recruiter_weight_modality} onChange={updateForm(setForm)} required /></Field>
         <div style={{ gridColumn: '1 / -1' }}>
-          <label style={styles.label}>Ciudades priorizadas</label>
+          <label style={styles.label}>Ciudad del candidato</label>
           <div style={{ display: 'grid', gap: 10 }}>
             {form.recruiter_city_preferences.map((preference, index) => (
-              <div key={`${preference.city}-${index}`} style={{ display: 'grid', gridTemplateColumns: 'minmax(220px, 2fr) minmax(120px, 1fr) auto', gap: 10, alignItems: 'end' }}>
+              <div key={preference.rowId} style={{ display: 'grid', gridTemplateColumns: 'minmax(220px, 2fr) minmax(120px, 1fr) auto', gap: 10, alignItems: 'end' }}>
                 <Field label={`Ciudad ${index + 1}`}>
                   <input
                     style={styles.input}
@@ -772,6 +821,68 @@ function RecruiterWeightsForm({ form, setForm, totalWeight, onSubmit }) {
       <p style={{ ...styles.status, marginBottom: 0 }}>Suma actual de pesos: <strong>{totalWeight}</strong>/100</p>
       <div>
         <button type="submit" style={styles.primaryButton}>Guardar pesos del reclutador</button>
+      </div>
+    </form>
+  )
+}
+
+function RecruiterVacancyForm({ form, setForm, currentUser, totalWeight, onSubmit, onCreateNew }) {
+  return (
+    <form onSubmit={onSubmit} style={{ display: 'grid', gap: 22 }}>
+      <FormBlock title="Vacante" description="Crea o edita una oferta de trabajo y asigna un puntaje especifico a cada skill requerida.">
+        <Field label="Titulo de la vacante"><input style={styles.input} name="titulo" value={form.titulo} onChange={updateForm(setForm)} required /></Field>
+        <Field label="Empresa"><input style={styles.input} name="empresa" value={form.empresa} onChange={updateForm(setForm)} placeholder={currentUser?.empresa ?? 'Empresa'} /></Field>
+        <Field label="Rol"><input style={styles.input} name="rol" value={form.rol} onChange={updateForm(setForm)} required /></Field>
+        <Field label="Lugar de trabajo"><input style={styles.input} name="ubicacion" value={form.ubicacion} onChange={updateForm(setForm)} /></Field>
+        <Field label="Modalidad">
+          <select style={styles.input} name="modalidad" value={form.modalidad} onChange={updateForm(setForm)}>
+            <option>Remoto</option>
+            <option>Hibrido</option>
+            <option>Presencial</option>
+          </select>
+        </Field>
+        <Field label="Salario referencial"><input style={styles.input} name="salario" type="number" min="0" value={form.salario} onChange={updateForm(setForm)} /></Field>
+        <div style={{ gridColumn: '1 / -1' }}>
+          <Field label="Descripcion">
+            <textarea style={styles.input} name="descripcion" value={form.descripcion} onChange={updateForm(setForm)} />
+          </Field>
+        </div>
+        <div style={{ gridColumn: '1 / -1' }}>
+          <label style={styles.label}>Skills requeridas</label>
+          <div style={{ display: 'grid', gap: 10 }}>
+            {(form.skill_weights ?? []).map((item, index) => (
+              <div key={item.rowId} style={{ display: 'grid', gridTemplateColumns: 'minmax(220px, 2fr) minmax(120px, 1fr) auto', gap: 10, alignItems: 'end' }}>
+                <Field label={`Skill ${index + 1}`}>
+                  <input
+                    style={styles.input}
+                    value={item.skill}
+                    onChange={(event) => updateVacancySkillWeight(setForm, index, 'skill', event.target.value)}
+                    placeholder="Ej: Python"
+                  />
+                </Field>
+                <Field label="Puntos">
+                  <input
+                    style={styles.input}
+                    type="number"
+                    min="0"
+                    max="100"
+                    value={item.points}
+                    onChange={(event) => updateVacancySkillWeight(setForm, index, 'points', event.target.value)}
+                  />
+                </Field>
+                <button type="button" style={styles.button} onClick={() => removeVacancySkillWeight(setForm, index)}>Quitar</button>
+              </div>
+            ))}
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+              <button type="button" style={styles.button} onClick={() => addVacancySkillWeight(setForm)}>Agregar skill</button>
+              <button type="button" style={styles.button} onClick={onCreateNew}>Nueva vacante</button>
+            </div>
+          </div>
+        </div>
+      </FormBlock>
+      <p style={{ ...styles.status, marginBottom: 0 }}>Configuracion actual: <strong>{totalWeight}</strong>/100</p>
+      <div>
+        <button type="submit" style={styles.primaryButton}>{form.id ? 'Guardar cambios de la vacante' : 'Crear vacante'}</button>
       </div>
     </form>
   )
@@ -905,22 +1016,21 @@ function recruiterFormFromUser(user) {
   const legacyCityWeight = Number(user?.recruiter_weight_city ?? 0)
   const normalizedCityPreferences = recruiterCityPreferences.length > 0
     ? recruiterCityPreferences
-    : (legacyCityWeight > 0 ? [{ city: user?.recruiter_target_city ?? '', points: legacyCityWeight }] : [{ city: '', points: '' }])
+    : (legacyCityWeight > 0 ? [{ rowId: createRowId(), city: user?.recruiter_target_city ?? '', points: legacyCityWeight }] : [{ rowId: createRowId(), city: '', points: '' }])
   return {
     nombre: user?.nombre ?? '',
     empresa: user?.empresa ?? '',
     recruiter_city_preferences: normalizedCityPreferences,
     recruiter_weight_role: user?.recruiter_weight_role ?? 40,
-    recruiter_weight_skills: user?.recruiter_weight_skills ?? 40,
     recruiter_weight_modality: user?.recruiter_weight_modality ?? 20,
   }
 }
 
-function recruiterWeightTotal(form) {
+function configurationTotal(form, vacancyForm) {
   const cityPoints = (form.recruiter_city_preferences ?? []).reduce((sum, preference) => sum + Number(preference.points || 0), 0)
-  return cityPoints + [
+  const skillPoints = (vacancyForm.skill_weights ?? []).reduce((sum, item) => sum + Number(item.points || 0), 0)
+  return cityPoints + skillPoints + [
     form.recruiter_weight_role,
-    form.recruiter_weight_skills,
     form.recruiter_weight_modality,
   ].reduce((sum, value) => sum + Number(value || 0), 0)
 }
@@ -928,7 +1038,7 @@ function recruiterWeightTotal(form) {
 function parseCityPreferences(values) {
   const parsed = (values ?? []).map((value) => {
     const [city, points] = String(value).split('|')
-    return { city: city?.trim() ?? '', points: points?.trim() ?? '' }
+    return { rowId: createRowId(), city: city?.trim() ?? '', points: points?.trim() ?? '' }
   }).filter((preference) => preference.city || preference.points)
   return parsed
 }
@@ -946,7 +1056,7 @@ function serializeCityPreferences(preferences) {
 function addRecruiterCityPreference(setForm) {
   setForm((prev) => ({
     ...prev,
-    recruiter_city_preferences: [...(prev.recruiter_city_preferences ?? []), { city: '', points: '' }],
+    recruiter_city_preferences: [...(prev.recruiter_city_preferences ?? []), { rowId: createRowId(), city: '', points: '' }],
   }))
 }
 
@@ -967,6 +1077,99 @@ function updateRecruiterCityPreference(setForm, index, field, value) {
       currentIndex === index ? { ...preference, [field]: value } : preference
     )),
   }))
+}
+
+function emptyRecruiterVacancyForm(user) {
+  return {
+    id: '',
+    titulo: '',
+    empresa: user?.empresa ?? '',
+    rol: '',
+    ubicacion: '',
+    modalidad: 'Remoto',
+    salario: '',
+    descripcion: '',
+    skill_weights: [{ rowId: createRowId(), skill: '', points: '' }],
+  }
+}
+
+function parseSkillWeights(values) {
+  return (values ?? []).map((value) => {
+    const [skill, points] = String(value).split('|')
+    return { rowId: createRowId(), skill: skill?.trim() ?? '', points: points?.trim() ?? '' }
+  }).filter((item) => item.skill || item.points)
+}
+
+function vacancyFormFromVacancy(vacancy, currentUser) {
+  const parsedSkillWeights = parseSkillWeights(vacancy?.skill_weights)
+  return {
+    id: vacancy?.id ?? '',
+    titulo: vacancy?.titulo ?? '',
+    empresa: vacancy?.empresa ?? currentUser?.empresa ?? '',
+    rol: vacancy?.rol ?? '',
+    ubicacion: vacancy?.ubicacion ?? '',
+    modalidad: vacancy?.modalidad ?? 'Remoto',
+    salario: vacancy?.salario ?? '',
+    descripcion: vacancy?.descripcion ?? '',
+    skill_weights: parsedSkillWeights.length > 0 ? parsedSkillWeights : [{ rowId: createRowId(), skill: '', points: '' }],
+  }
+}
+
+function serializeSkillWeights(values) {
+  return (values ?? [])
+    .map((item) => ({
+      skill: String(item.skill ?? '').trim(),
+      points: String(item.points ?? '').trim(),
+    }))
+    .filter((item) => item.skill && item.points !== '')
+    .map((item) => `${item.skill}|${Number(item.points)}`)
+}
+
+function buildRecruiterVacancyPayload(form, currentUser) {
+  const skillWeights = serializeSkillWeights(form.skill_weights)
+  const skills = skillWeights.map((item) => item.split('|')[0])
+  return {
+    id: form.id || undefined,
+    titulo: form.titulo.trim(),
+    empresa: form.empresa.trim() || currentUser?.empresa || null,
+    rol: form.rol.trim(),
+    ubicacion: form.ubicacion.trim() || null,
+    modalidad: form.modalidad,
+    salario: form.salario === '' ? null : Number(form.salario),
+    descripcion: form.descripcion.trim() || null,
+    skills,
+    skill_weights: skillWeights,
+  }
+}
+
+function addVacancySkillWeight(setForm) {
+  setForm((prev) => ({
+    ...prev,
+    skill_weights: [...(prev.skill_weights ?? []), { rowId: createRowId(), skill: '', points: '' }],
+  }))
+}
+
+function removeVacancySkillWeight(setForm, index) {
+  setForm((prev) => {
+    const nextValues = (prev.skill_weights ?? []).filter((_, currentIndex) => currentIndex !== index)
+    return {
+      ...prev,
+      skill_weights: nextValues.length > 0 ? nextValues : [{ rowId: createRowId(), skill: '', points: '' }],
+    }
+  })
+}
+
+function updateVacancySkillWeight(setForm, index, field, value) {
+  setForm((prev) => ({
+    ...prev,
+    skill_weights: (prev.skill_weights ?? []).map((item, currentIndex) => (
+      currentIndex === index ? { ...item, [field]: value } : item
+    )),
+  }))
+}
+
+function createRowId() {
+  return `row-${Math.random().toString(36).slice(2, 10)}`
 }
 
 function calculateAge(dateValue) {

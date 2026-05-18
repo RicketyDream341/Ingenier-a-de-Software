@@ -18,6 +18,7 @@ DEFAULT_VACANCIES = [
         "modalidad": "Remoto",
         "salario": 5500000,
         "skills": ["React", "JavaScript", "HTML", "CSS"],
+        "skill_weights": ["React|5", "JavaScript|5", "HTML|5", "CSS|5"],
         "descripcion": "Construccion de interfaces web para productos de empleabilidad.",
     },
     {
@@ -29,6 +30,7 @@ DEFAULT_VACANCIES = [
         "modalidad": "Hibrido",
         "salario": 6500000,
         "skills": ["Python", "FastAPI", "Neo4j", "APIs"],
+        "skill_weights": ["Python|5", "FastAPI|5", "Neo4j|5", "APIs|5"],
         "descripcion": "Desarrollo de APIs y servicios de datos para matching de talento.",
     },
     {
@@ -40,6 +42,7 @@ DEFAULT_VACANCIES = [
         "modalidad": "Remoto",
         "salario": 7500000,
         "skills": ["Neo4j", "Python", "Cypher", "ETL"],
+        "skill_weights": ["Neo4j|5", "Python|5", "Cypher|5", "ETL|5"],
         "descripcion": "Modelado de grafos, pipelines de datos y recomendaciones explicables.",
     },
     {
@@ -51,6 +54,7 @@ DEFAULT_VACANCIES = [
         "modalidad": "Presencial",
         "salario": 4800000,
         "skills": ["Testing", "Selenium", "Python", "CI"],
+        "skill_weights": ["Testing|5", "Selenium|5", "Python|5", "CI|5"],
         "descripcion": "Automatizacion de pruebas para flujos de postulacion y seleccion.",
     },
 ]
@@ -90,10 +94,6 @@ def ensure_seed_data(session):
     session.run("CREATE CONSTRAINT skill_name_unique IF NOT EXISTS FOR (s:Skill) REQUIRE s.nombre IS UNIQUE")
     session.run("CREATE CONSTRAINT role_name_unique IF NOT EXISTS FOR (r:Role) REQUIRE r.nombre IS UNIQUE")
 
-    existing = session.run("MATCH (v:Vacancy) RETURN count(v) AS total").single()["total"]
-    if existing:
-        return
-
     query = """
     UNWIND $vacancies AS item
     MERGE (v:Vacancy {id: item.id})
@@ -103,7 +103,8 @@ def ensure_seed_data(session):
         v.modalidad = item.modalidad,
         v.salario = item.salario,
         v.descripcion = item.descripcion,
-        v.created_at = $created_at
+        v.skill_weights = item.skill_weights,
+        v.created_at = coalesce(v.created_at, $created_at)
     MERGE (r:Role {nombre: item.rol})
     MERGE (v)-[:PARA_ROL]->(r)
     WITH v, item
@@ -116,14 +117,6 @@ def ensure_seed_data(session):
 
 def sync_recruiter_assignments(session, recruiter_email: str):
     assigned_vacancy_ids = RECRUITER_ASSIGNMENTS.get((recruiter_email or "").strip().lower(), [])
-    session.run(
-        """
-        MATCH (u:User {email: $email})
-        OPTIONAL MATCH (u)-[rel:MANAGES]->(:Vacancy)
-        DELETE rel
-        """,
-        {"email": recruiter_email.strip()},
-    )
     if not assigned_vacancy_ids:
         return
     session.run(

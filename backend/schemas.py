@@ -24,8 +24,20 @@ class UserCreate(BaseModel):
     educacion: Optional[str] = None
     recruiter_city_preferences: Optional[List[str]] = None
     recruiter_weight_role: Optional[int] = None
-    recruiter_weight_skills: Optional[int] = None
     recruiter_weight_modality: Optional[int] = None
+
+
+class VacancyCreate(BaseModel):
+    id: Optional[str] = None
+    titulo: str
+    empresa: Optional[str] = None
+    rol: str
+    ubicacion: Optional[str] = None
+    modalidad: Optional[str] = None
+    salario: Optional[int] = None
+    descripcion: Optional[str] = None
+    skills: Optional[List[str]] = None
+    skill_weights: Optional[List[str]] = None
 
 
 class LoginRequest(BaseModel):

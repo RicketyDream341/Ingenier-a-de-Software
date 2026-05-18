@@ -1,6 +1,6 @@
-# Profile Manager
+# GraphMatchX
 
-Profile Manager es una plataforma web para gestionar perfiles profesionales y recomendar vacantes laborales de forma explicable. El sistema permite registrar candidatos, completar informacion profesional, relacionar habilidades con roles y vacantes, y mostrar por que una oportunidad puede ser relevante para cada usuario.
+GraphMatchX es una plataforma web para gestionar perfiles profesionales y recomendar vacantes laborales de forma explicable. El sistema permite registrar candidatos, completar informacion profesional, relacionar habilidades con roles y vacantes, y mostrar por que una oportunidad puede ser relevante para cada usuario.
 
 ## Stack
 

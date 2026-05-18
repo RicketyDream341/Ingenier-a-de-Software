@@ -260,7 +260,7 @@ def create_or_update_user(user: UserCreate, request: Request):
             else:
                 raw_skills = existing_user.get("skills") or existing_user.get("intereses") or []
         else:
-            raw_skills = user.skills or user.intereses
+            raw_skills = user.skills or user.intereses or []
 
         skills = clean_list(raw_skills)
         if len(skills) > MAX_SKILLS:
@@ -271,11 +271,6 @@ def create_or_update_user(user: UserCreate, request: Request):
                 user.recruiter_weight_role
                 if user.recruiter_weight_role is not None
                 else existing_user.get("recruiter_weight_role") if existing_user else 40
-            ),
-            "skills": (
-                user.recruiter_weight_skills
-                if user.recruiter_weight_skills is not None
-                else existing_user.get("recruiter_weight_skills") if existing_user else 40
             ),
             "modality": (
                 user.recruiter_weight_modality
@@ -290,8 +285,8 @@ def create_or_update_user(user: UserCreate, request: Request):
         )
         recruiter_city_preferences, recruiter_city_points = normalize_city_preferences(raw_city_preferences)
 
-        if account_type == "recruiter" and recruiter_city_points + sum(recruiter_weights.values()) != 100:
-            raise HTTPException(status_code=400, detail="La suma de ciudades, rol, skills y modalidad debe ser 100.")
+        if account_type == "recruiter" and recruiter_city_points + sum(recruiter_weights.values()) > 100:
+            raise HTTPException(status_code=400, detail="La suma de ciudad, rol y modalidad no puede superar 100.")
 
         existing_username = session.run(
             """
@@ -342,7 +337,7 @@ def create_or_update_user(user: UserCreate, request: Request):
             u.recruiter_weight_salary = null,
             u.recruiter_city_preferences = $recruiter_city_preferences,
             u.recruiter_weight_role = $recruiter_weight_role,
-            u.recruiter_weight_skills = $recruiter_weight_skills,
+            u.recruiter_weight_skills = null,
             u.recruiter_weight_modality = $recruiter_weight_modality,
             u.activo = null,
             u.updated_at = $updated_at,
@@ -410,7 +405,6 @@ def create_or_update_user(user: UserCreate, request: Request):
             ),
             "recruiter_city_preferences": recruiter_city_preferences if account_type == "recruiter" else [],
             "recruiter_weight_role": recruiter_weights["role"] if account_type == "recruiter" else None,
-            "recruiter_weight_skills": recruiter_weights["skills"] if account_type == "recruiter" else None,
             "recruiter_weight_modality": recruiter_weights["modality"] if account_type == "recruiter" else None,
             "password_hash": password_hash,
             "updated_at": now,
