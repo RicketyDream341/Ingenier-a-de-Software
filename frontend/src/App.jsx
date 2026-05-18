@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import logo from './assets/logo.jpeg'
 
 const API_BASE_URL = 'http://127.0.0.1:8000'
+const CSRF_STORAGE_KEY = 'profile_manager_csrf'
 
 const SKILL_OPTIONS = ['Python', 'Neo4j', 'FastAPI', 'React', 'JavaScript', 'SQL', 'Testing', 'Selenium', 'Cypher', 'ETL']
 
@@ -158,15 +159,20 @@ function App() {
 
   useEffect(() => {
     requestJson('/session')
-      .then((data) => updateCurrentUser(data.user))
+      .then((data) => {
+        updateCurrentUser(data.user)
+        setCsrfToken(data.csrf_token)
+      })
       .catch(() => {
         window.localStorage.removeItem('profile_manager_user')
+        window.localStorage.removeItem(CSRF_STORAGE_KEY)
         setCurrentUser(null)
       })
   }, [])
 
-  const login = (user) => {
+  const login = (user, csrfToken) => {
     window.localStorage.setItem('profile_manager_user', JSON.stringify(user))
+    setCsrfToken(csrfToken)
     setCurrentUser(user)
     navigate('/dashboard')
   }
@@ -183,6 +189,7 @@ function App() {
       // La salida local se mantiene aunque la cookie ya no exista.
     }
     window.localStorage.removeItem('profile_manager_user')
+    window.localStorage.removeItem(CSRF_STORAGE_KEY)
     setCurrentUser(null)
     navigate('/')
   }
@@ -258,11 +265,13 @@ function Home({ navigate }) {
 
 function RegisterPage({ navigate, setMessage }) {
   const [form, setForm] = useState({
+    account_type: 'candidate',
     username: '',
     nombre: '',
     email: '',
     password: '',
     fecha_nacimiento: '',
+    empresa: '',
   })
 
   const submitRegister = async (event) => {
@@ -271,17 +280,21 @@ function RegisterPage({ navigate, setMessage }) {
       const data = await requestJson('/users', {
         method: 'POST',
         body: JSON.stringify({
+          account_type: form.account_type,
           username: form.username.trim(),
           nombre: form.nombre.trim(),
           email: form.email.trim(),
           password: form.password.trim(),
+          empresa: form.account_type === 'recruiter' ? form.empresa.trim() || null : null,
           fecha_nacimiento: form.fecha_nacimiento,
-          edad: calculateAge(form.fecha_nacimiento),
+          edad: form.account_type === 'candidate' ? calculateAge(form.fecha_nacimiento) : null,
           skills: [],
           intereses: [],
         }),
       })
-      setMessage(`Perfil creado. Tu ID de candidato es ${data.user.id}.`)
+      setMessage(form.account_type === 'recruiter'
+        ? `Cuenta de reclutador creada. Tu ID es ${data.user.id}.`
+        : `Perfil creado. Tu ID de candidato es ${data.user.id}.`)
       navigate('/login')
     } catch (error) {
       setMessage(`No fue posible crear el perfil: ${error.message}`)
@@ -292,24 +305,37 @@ function RegisterPage({ navigate, setMessage }) {
     <section style={{ ...styles.panel, maxWidth: 720 }}>
       <h2 style={{ marginTop: 0 }}>Crear cuenta</h2>
       <p style={styles.muted}>
-        Registra tus datos basicos. El perfil profesional se completa despues de iniciar sesion.
+        Registra tus datos basicos. Los candidatos completan su perfil profesional despues de iniciar sesion. Los reclutadores podran definir pesos para evaluar candidatos.
       </p>
       <form onSubmit={submitRegister} style={styles.grid}>
+        <Field label="Tipo de cuenta">
+          <select style={styles.input} name="account_type" value={form.account_type} onChange={updateForm(setForm)}>
+            <option value="candidate">Candidato</option>
+            <option value="recruiter">Reclutador</option>
+          </select>
+        </Field>
         <Field label="Nombre de usuario">
           <input style={styles.input} name="username" value={form.username} onChange={updateForm(setForm)} required />
         </Field>
         <Field label="Nombre completo">
           <input style={styles.input} name="nombre" value={form.nombre} onChange={updateForm(setForm)} required />
         </Field>
+        {form.account_type === 'recruiter' ? (
+          <Field label="Empresa">
+            <input style={styles.input} name="empresa" value={form.empresa} onChange={updateForm(setForm)} />
+          </Field>
+        ) : null}
         <Field label="Email">
           <input style={styles.input} name="email" type="email" value={form.email} onChange={updateForm(setForm)} required />
         </Field>
         <Field label="Contrasena">
           <input style={styles.input} name="password" type="password" value={form.password} onChange={updateForm(setForm)} required />
         </Field>
-        <Field label="Fecha de nacimiento">
-          <input style={styles.input} name="fecha_nacimiento" type="date" value={form.fecha_nacimiento} onChange={updateForm(setForm)} required />
-        </Field>
+        {form.account_type === 'candidate' ? (
+          <Field label="Fecha de nacimiento">
+            <input style={styles.input} name="fecha_nacimiento" type="date" value={form.fecha_nacimiento} onChange={updateForm(setForm)} required />
+          </Field>
+        ) : null}
         <button type="submit" style={styles.primaryButton}>Crear cuenta</button>
       </form>
     </section>
@@ -330,7 +356,7 @@ function LoginPage({ login, setMessage }) {
         }),
       })
       setMessage(`Sesion iniciada para ${data.user.nombre}.`)
-      login(data.user)
+      login(data.user, data.csrf_token)
     } catch (error) {
       setMessage(`No fue posible iniciar sesion: ${error.message}`)
     }
@@ -338,8 +364,8 @@ function LoginPage({ login, setMessage }) {
 
   return (
     <section style={{ ...styles.panel, maxWidth: 680 }}>
-      <h2 style={{ marginTop: 0 }}>Ingreso de candidato</h2>
-      <p style={styles.muted}>Accede al dashboard para consultar recomendaciones y postulaciones.</p>
+      <h2 style={{ marginTop: 0 }}>Ingreso</h2>
+      <p style={styles.muted}>Accede como candidato o reclutador para usar el dashboard correspondiente.</p>
       <form onSubmit={submitLogin} style={styles.grid}>
         <Field label="Email">
           <input style={styles.input} name="email" type="email" value={form.email} onChange={updateForm(setForm)} required />
@@ -354,6 +380,10 @@ function LoginPage({ login, setMessage }) {
 }
 
 function Dashboard({ currentUser, navigate, setMessage, updateCurrentUser }) {
+  if (currentUser?.account_type === 'recruiter') {
+    return <RecruiterDashboard currentUser={currentUser} navigate={navigate} setMessage={setMessage} updateCurrentUser={updateCurrentUser} />
+  }
+
   const [recommendations, setRecommendations] = useState([])
   const [applications, setApplications] = useState([])
   const [vacancies, setVacancies] = useState([])
@@ -432,7 +462,7 @@ function Dashboard({ currentUser, navigate, setMessage, updateCurrentUser }) {
   return (
     <>
       <section style={styles.panel}>
-        <p style={styles.tag}>Candidato activo</p>
+        <p style={styles.tag}>Candidato</p>
         <h2 style={{ marginTop: 0 }}>{currentUser.nombre}</h2>
         <p style={styles.muted}>
           Rol objetivo: <strong>{currentUser.rol_objetivo ?? currentUser.ocupacion ?? 'Pendiente'}</strong>
@@ -508,6 +538,165 @@ function Dashboard({ currentUser, navigate, setMessage, updateCurrentUser }) {
   )
 }
 
+function RecruiterDashboard({ currentUser, navigate, setMessage, updateCurrentUser }) {
+  const [vacancies, setVacancies] = useState([])
+  const [selectedVacancyId, setSelectedVacancyId] = useState('')
+  const [recommendations, setRecommendations] = useState([])
+  const [applications, setApplications] = useState([])
+  const [form, setForm] = useState(() => recruiterFormFromUser(currentUser))
+
+  const loadVacancies = async () => {
+    const data = await requestJson(`/recruiters/${currentUser.id}/vacancies`)
+    const vacancyList = data.vacancies ?? []
+    setVacancies(vacancyList)
+    if (!selectedVacancyId && vacancyList[0]?.id) {
+      setSelectedVacancyId(vacancyList[0].id)
+    }
+  }
+
+  const loadRecommendations = async (vacancyId = selectedVacancyId) => {
+    if (!vacancyId) return
+    const data = await requestJson(`/recruiters/${currentUser.id}/recommendations?vacancy_id=${encodeURIComponent(vacancyId)}`)
+    setRecommendations(data.recommendations ?? [])
+  }
+
+  const loadApplications = async (vacancyId = selectedVacancyId) => {
+    if (!vacancyId) return
+    const data = await requestJson(`/recruiters/${currentUser.id}/applications?vacancy_id=${encodeURIComponent(vacancyId)}`)
+    setApplications(data.applications ?? [])
+  }
+
+  useEffect(() => {
+    if (currentUser) {
+      setForm(recruiterFormFromUser(currentUser))
+      loadVacancies().catch((error) => setMessage(`No se pudieron cargar las vacantes: ${error.message}`))
+    }
+  }, [currentUser])
+
+  useEffect(() => {
+    if (selectedVacancyId) {
+      loadRecommendations(selectedVacancyId).catch((error) => setMessage(`No se pudieron cargar las recomendaciones del reclutador: ${error.message}`))
+      loadApplications(selectedVacancyId).catch((error) => setMessage(`No se pudieron cargar las postulaciones de la vacante: ${error.message}`))
+    }
+  }, [selectedVacancyId])
+
+  if (!currentUser) {
+    return (
+      <section style={styles.panel}>
+        <h2 style={{ marginTop: 0 }}>Acceso requerido</h2>
+        <button style={styles.primaryButton} onClick={() => navigate('/login')}>Ir al login</button>
+      </section>
+    )
+  }
+
+  const totalWeight = recruiterWeightTotal(form)
+
+  const saveRecruiterProfile = async (event) => {
+    event.preventDefault()
+    if (totalWeight !== 100) {
+      setMessage('Los pesos del reclutador deben sumar exactamente 100.')
+      return
+    }
+
+    try {
+      const data = await requestJson('/users', {
+        method: 'POST',
+        body: JSON.stringify({
+          id: currentUser.id,
+          account_type: 'recruiter',
+          username: currentUser.username,
+          nombre: form.nombre.trim() || currentUser.nombre,
+          email: currentUser.email,
+          empresa: form.empresa.trim() || null,
+          recruiter_city_preferences: serializeCityPreferences(form.recruiter_city_preferences),
+          recruiter_weight_role: Number(form.recruiter_weight_role),
+          recruiter_weight_skills: Number(form.recruiter_weight_skills),
+          recruiter_weight_modality: Number(form.recruiter_weight_modality),
+        }),
+      })
+      updateCurrentUser(data.user)
+      setMessage('Preferencias del reclutador actualizadas.')
+      await loadRecommendations()
+    } catch (error) {
+      setMessage(`No fue posible guardar los pesos del reclutador: ${error.message}`)
+    }
+  }
+
+  return (
+    <>
+      <section style={styles.panel}>
+        <p style={styles.tag}>Reclutador</p>
+        <h2 style={{ marginTop: 0 }}>{currentUser.nombre}</h2>
+        <p style={styles.muted}>Empresa: <strong>{currentUser.empresa ?? 'No definida'}</strong></p>
+      </section>
+
+      <section style={styles.section}>
+        <RecruiterWeightsForm form={form} setForm={setForm} totalWeight={totalWeight} onSubmit={saveRecruiterProfile} />
+      </section>
+
+      <section style={styles.section}>
+        <section style={styles.card}>
+          <h3 style={{ marginTop: 0 }}>Vacante a evaluar</h3>
+          <Field label="Vacante">
+            <select style={styles.input} value={selectedVacancyId} onChange={(event) => setSelectedVacancyId(event.target.value)}>
+              {vacancies.map((vacancy) => (
+                <option key={vacancy.id} value={vacancy.id}>{vacancy.titulo} · {vacancy.rol}</option>
+              ))}
+            </select>
+          </Field>
+        </section>
+      </section>
+
+      <section style={styles.section}>
+        <h2>Ranking de candidatos</h2>
+        <div style={{ display: 'grid', gap: 14 }}>
+          {recommendations.map((item) => (
+            <article key={item.candidate.id} style={styles.card}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
+                <div>
+                  <h3 style={{ margin: '0 0 8px' }}>{item.candidate.nombre}</h3>
+                  <p style={{ ...styles.muted, margin: 0 }}>
+                    {item.candidate.rol_objetivo ?? 'Sin rol objetivo'} · {item.candidate.ciudad ?? 'Sin ciudad'} · {item.candidate.modalidad ?? 'Sin modalidad'}
+                  </p>
+                </div>
+                <strong style={{ fontSize: 28, color: '#215d6e' }}>{item.score}</strong>
+              </div>
+              <p style={{ ...styles.muted, marginBottom: 10 }}><strong>Explicacion:</strong> {item.explanation}</p>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+                <span style={styles.tag}>Ciudad {item.score_breakdown.city}/{item.weights.city}</span>
+                <span style={styles.tag}>Rol {item.score_breakdown.role}/{item.weights.role}</span>
+                <span style={styles.tag}>Skills {item.score_breakdown.skills}/{item.weights.skills}</span>
+                <span style={styles.tag}>Modalidad {item.score_breakdown.modality}/{item.weights.modality}</span>
+              </div>
+              <div>
+                {(item.matched_skills ?? []).map((skill) => <span key={skill} style={{ ...styles.tag, background: '#dff4e5', color: '#1e6b3b' }}>{skill}</span>)}
+                {(item.missing_skills ?? []).map((skill) => <span key={skill} style={{ ...styles.tag, background: '#f3e7e3', color: '#8a3d24' }}>{skill}</span>)}
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section style={styles.section}>
+        <h2>Postulaciones recibidas</h2>
+        <div style={{ display: 'grid', gap: 14 }}>
+          {applications.map((item) => (
+            <article key={item.application.id} style={styles.card}>
+              <h3 style={{ margin: '0 0 8px' }}>{item.candidate.nombre}</h3>
+              <p style={{ ...styles.muted, margin: 0 }}>
+                {item.candidate.rol_objetivo ?? 'Sin rol objetivo'} · {item.candidate.ciudad ?? 'Sin ciudad'}
+              </p>
+              <p style={{ ...styles.muted, marginTop: 10 }}>Estado: {item.application.estado}</p>
+              {(item.candidate.skills ?? []).map((skill) => <span key={skill} style={styles.tag}>{skill}</span>)}
+            </article>
+          ))}
+          {applications.length === 0 ? <p style={styles.muted}>No hay postulaciones registradas para esta vacante.</p> : null}
+        </div>
+      </section>
+    </>
+  )
+}
+
 function ProfessionalProfileForm({ form, setForm, selectedSkills, setSelectedSkills, onSubmit }) {
   return (
     <form onSubmit={onSubmit} style={{ display: 'grid', gap: 22 }}>
@@ -524,8 +713,6 @@ function ProfessionalProfileForm({ form, setForm, selectedSkills, setSelectedSki
             <option>Presencial</option>
           </select>
         </Field>
-        <Field label="Aspiracion salarial"><input style={styles.input} name="aspiracion_salarial" type="number" min="0" value={form.aspiracion_salarial} onChange={updateForm(setForm)} /></Field>
-        <Field label="Disponibilidad"><input style={styles.input} name="disponibilidad" value={form.disponibilidad} onChange={updateForm(setForm)} /></Field>
         <Field label="Experiencia"><textarea style={styles.input} name="experiencia" value={form.experiencia} onChange={updateForm(setForm)} /></Field>
         <Field label="Educacion"><textarea style={styles.input} name="educacion" value={form.educacion} onChange={updateForm(setForm)} /></Field>
       </FormBlock>
@@ -536,6 +723,55 @@ function ProfessionalProfileForm({ form, setForm, selectedSkills, setSelectedSki
 
       <div>
         <button type="submit" style={styles.primaryButton}>Guardar perfil profesional</button>
+      </div>
+    </form>
+  )
+}
+
+function RecruiterWeightsForm({ form, setForm, totalWeight, onSubmit }) {
+  return (
+    <form onSubmit={onSubmit} style={{ display: 'grid', gap: 22 }}>
+      <FormBlock title="Preferencias del reclutador" description="Define ciudades con puntaje y distribuye el resto entre rol, skills y modalidad. La suma total debe ser exactamente 100 puntos.">
+        <Field label="Nombre completo"><input style={styles.input} name="nombre" value={form.nombre} onChange={updateForm(setForm)} required /></Field>
+        <Field label="Empresa"><input style={styles.input} name="empresa" value={form.empresa} onChange={updateForm(setForm)} /></Field>
+        <Field label="Peso por rol"><input style={styles.input} name="recruiter_weight_role" type="number" min="0" max="100" value={form.recruiter_weight_role} onChange={updateForm(setForm)} required /></Field>
+        <Field label="Peso por skills"><input style={styles.input} name="recruiter_weight_skills" type="number" min="0" max="100" value={form.recruiter_weight_skills} onChange={updateForm(setForm)} required /></Field>
+        <Field label="Peso por modalidad"><input style={styles.input} name="recruiter_weight_modality" type="number" min="0" max="100" value={form.recruiter_weight_modality} onChange={updateForm(setForm)} required /></Field>
+        <div style={{ gridColumn: '1 / -1' }}>
+          <label style={styles.label}>Ciudades priorizadas</label>
+          <div style={{ display: 'grid', gap: 10 }}>
+            {form.recruiter_city_preferences.map((preference, index) => (
+              <div key={`${preference.city}-${index}`} style={{ display: 'grid', gridTemplateColumns: 'minmax(220px, 2fr) minmax(120px, 1fr) auto', gap: 10, alignItems: 'end' }}>
+                <Field label={`Ciudad ${index + 1}`}>
+                  <input
+                    style={styles.input}
+                    value={preference.city}
+                    onChange={(event) => updateRecruiterCityPreference(setForm, index, 'city', event.target.value)}
+                    placeholder="Ej: Bogota"
+                  />
+                </Field>
+                <Field label="Puntos">
+                  <input
+                    style={styles.input}
+                    type="number"
+                    min="0"
+                    max="100"
+                    value={preference.points}
+                    onChange={(event) => updateRecruiterCityPreference(setForm, index, 'points', event.target.value)}
+                  />
+                </Field>
+                <button type="button" style={styles.button} onClick={() => removeRecruiterCityPreference(setForm, index)}>Quitar</button>
+              </div>
+            ))}
+            <div>
+              <button type="button" style={styles.button} onClick={() => addRecruiterCityPreference(setForm)}>Agregar ciudad</button>
+            </div>
+          </div>
+        </div>
+      </FormBlock>
+      <p style={{ ...styles.status, marginBottom: 0 }}>Suma actual de pesos: <strong>{totalWeight}</strong>/100</p>
+      <div>
+        <button type="submit" style={styles.primaryButton}>Guardar pesos del reclutador</button>
       </div>
     </form>
   )
@@ -628,8 +864,6 @@ function emptyProfileForm() {
     other_skills: '',
     rol_objetivo: '',
     modalidad: 'Remoto',
-    aspiracion_salarial: '',
-    disponibilidad: '',
     experiencia: '',
     educacion: '',
   }
@@ -644,8 +878,6 @@ function profileFormFromUser(user) {
     ocupacion: user?.ocupacion ?? '',
     rol_objetivo: user?.rol_objetivo ?? '',
     modalidad: user?.modalidad ?? 'Remoto',
-    aspiracion_salarial: user?.aspiracion_salarial ?? '',
-    disponibilidad: user?.disponibilidad ?? '',
     experiencia: user?.experiencia ?? '',
     educacion: user?.educacion ?? '',
   }
@@ -663,11 +895,78 @@ function buildProfessionalPayload(form, selectedSkills) {
     skills,
     rol_objetivo: form.rol_objetivo.trim() || null,
     modalidad: form.modalidad,
-    aspiracion_salarial: form.aspiracion_salarial ? Number(form.aspiracion_salarial) : null,
-    disponibilidad: form.disponibilidad.trim() || null,
     experiencia: form.experiencia.trim() || null,
     educacion: form.educacion.trim() || null,
   }
+}
+
+function recruiterFormFromUser(user) {
+  const recruiterCityPreferences = parseCityPreferences(user?.recruiter_city_preferences)
+  const legacyCityWeight = Number(user?.recruiter_weight_city ?? 0)
+  const normalizedCityPreferences = recruiterCityPreferences.length > 0
+    ? recruiterCityPreferences
+    : (legacyCityWeight > 0 ? [{ city: user?.recruiter_target_city ?? '', points: legacyCityWeight }] : [{ city: '', points: '' }])
+  return {
+    nombre: user?.nombre ?? '',
+    empresa: user?.empresa ?? '',
+    recruiter_city_preferences: normalizedCityPreferences,
+    recruiter_weight_role: user?.recruiter_weight_role ?? 40,
+    recruiter_weight_skills: user?.recruiter_weight_skills ?? 40,
+    recruiter_weight_modality: user?.recruiter_weight_modality ?? 20,
+  }
+}
+
+function recruiterWeightTotal(form) {
+  const cityPoints = (form.recruiter_city_preferences ?? []).reduce((sum, preference) => sum + Number(preference.points || 0), 0)
+  return cityPoints + [
+    form.recruiter_weight_role,
+    form.recruiter_weight_skills,
+    form.recruiter_weight_modality,
+  ].reduce((sum, value) => sum + Number(value || 0), 0)
+}
+
+function parseCityPreferences(values) {
+  const parsed = (values ?? []).map((value) => {
+    const [city, points] = String(value).split('|')
+    return { city: city?.trim() ?? '', points: points?.trim() ?? '' }
+  }).filter((preference) => preference.city || preference.points)
+  return parsed
+}
+
+function serializeCityPreferences(preferences) {
+  return (preferences ?? [])
+    .map((preference) => ({
+      city: String(preference.city ?? '').trim(),
+      points: String(preference.points ?? '').trim(),
+    }))
+    .filter((preference) => preference.city && preference.points !== '')
+    .map((preference) => `${preference.city}|${Number(preference.points)}`)
+}
+
+function addRecruiterCityPreference(setForm) {
+  setForm((prev) => ({
+    ...prev,
+    recruiter_city_preferences: [...(prev.recruiter_city_preferences ?? []), { city: '', points: '' }],
+  }))
+}
+
+function removeRecruiterCityPreference(setForm, index) {
+  setForm((prev) => {
+    const nextPreferences = (prev.recruiter_city_preferences ?? []).filter((_, currentIndex) => currentIndex !== index)
+    return {
+      ...prev,
+      recruiter_city_preferences: nextPreferences.length > 0 ? nextPreferences : [{ city: '', points: '' }],
+    }
+  })
+}
+
+function updateRecruiterCityPreference(setForm, index, field, value) {
+  setForm((prev) => ({
+    ...prev,
+    recruiter_city_preferences: (prev.recruiter_city_preferences ?? []).map((preference, currentIndex) => (
+      currentIndex === index ? { ...preference, [field]: value } : preference
+    )),
+  }))
 }
 
 function calculateAge(dateValue) {
@@ -689,8 +988,14 @@ function updateForm(setter) {
 }
 
 async function requestJson(path, options = {}) {
+  const method = (options.method ?? 'GET').toUpperCase()
+  const csrfToken = window.localStorage.getItem(CSRF_STORAGE_KEY)
+  const headers = { 'Content-Type': 'application/json', ...(options.headers ?? {}) }
+  if (!['GET', 'HEAD', 'OPTIONS'].includes(method) && csrfToken) {
+    headers['X-CSRF-Token'] = csrfToken
+  }
   const response = await fetch(`${API_BASE_URL}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...(options.headers ?? {}) },
+    headers,
     credentials: 'include',
     ...options,
   })
@@ -699,6 +1004,12 @@ async function requestJson(path, options = {}) {
     throw new Error(data?.detail ?? `HTTP ${response.status}`)
   }
   return data
+}
+
+function setCsrfToken(token) {
+  if (token) {
+    window.localStorage.setItem(CSRF_STORAGE_KEY, token)
+  }
 }
 
 export default App

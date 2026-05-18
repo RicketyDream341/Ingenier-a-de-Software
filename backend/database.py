@@ -55,6 +55,10 @@ DEFAULT_VACANCIES = [
     },
 ]
 
+RECRUITER_ASSIGNMENTS = {
+    "seguro.recruiter@example.com": ["vac-back-python"],
+}
+
 
 def utc_now():
     return datetime.now(timezone.utc).isoformat()
@@ -108,3 +112,26 @@ def ensure_seed_data(session):
     MERGE (v)-[:REQUIERE]->(s)
     """
     session.run(query, {"vacancies": DEFAULT_VACANCIES, "created_at": utc_now()})
+
+
+def sync_recruiter_assignments(session, recruiter_email: str):
+    assigned_vacancy_ids = RECRUITER_ASSIGNMENTS.get((recruiter_email or "").strip().lower(), [])
+    session.run(
+        """
+        MATCH (u:User {email: $email})
+        OPTIONAL MATCH (u)-[rel:MANAGES]->(:Vacancy)
+        DELETE rel
+        """,
+        {"email": recruiter_email.strip()},
+    )
+    if not assigned_vacancy_ids:
+        return
+    session.run(
+        """
+        MATCH (u:User {email: $email})
+        UNWIND $vacancy_ids AS vacancy_id
+        MATCH (v:Vacancy {id: vacancy_id})
+        MERGE (u)-[:MANAGES]->(v)
+        """,
+        {"email": recruiter_email.strip(), "vacancy_ids": assigned_vacancy_ids},
+    )

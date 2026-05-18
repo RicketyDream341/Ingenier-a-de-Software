@@ -37,3 +37,6 @@ Thumbs.db
 *.backup
 *.sqlite
 *.db
+
+# Local secrets
+backend/.jwt_secret
